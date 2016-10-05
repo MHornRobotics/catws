@@ -6,113 +6,82 @@
 #include <geometry_msgs/Twist.h>
 #include <geometry_msgs/Point.h>
 #include <boost/thread/thread.hpp>
+#include <turtlesim/Spawn.h>
+#include <turtlesim/Pose.h> // x, y, theta
+#include <turtlesim/TeleportAbsolute.h>
+#include <std_srvs/Empty.h>
 
-// Creating a class for a leader driver
-class LeaderDriver {
- private:
+// Creating a class for a Spinner driver
+class SpinnerDriver {
+private:
   // Nothing outside of this class should even need to see this
   ros::NodeHandle n;
   ros::Publisher velPub;
   geometry_msgs::Twist command;
 
- public:
+public:
   // Something others may be able to see
-  geometry_msgs::Point goal;
-  geometry_msgs::Point start;
 
   // Creating a constructor that takes a ROS node handle and generates a
   // publisher
-  LeaderDriver(ros::NodeHandle& nh) {
+  SpinnerDriver(ros::NodeHandle& nh) {
     n = nh;
-    velPub =
-        n.advertise<geometry_msgs::Twist>("/turtlesim1/turtle1/cmd_vel", 1);
-    goal.x = 10.0;
-    goal.y = 10.0;
+    velPub = n.advertise<geometry_msgs::Twist>("/turtle1/cmd_vel", 1);
   }
 
   void lead() {
     std::cout << "Will now try to lead the way for my follower!\n";
     ros::Duration(0.5).sleep();
 
-    // This is the new standard random number generator in c++11
-    std::mt19937 gen(time(NULL));
-    std::uniform_real_distribution<double> prob(0, 2);
-
-    // Step size is the maximum distance the robot will travel per command
-    double step = (goal.x + goal.x + goal.z) / 80;
-    double countAng = 0.0;
-
     while (n.ok()) {
-      // Try to move towards goal from current position.
-      if (prob(gen) / 2 <= exp(2) / 10) {
-        command.linear.x = step * (prob(gen) - 1);
-        // command.linear.y = step * (prob(gen) - 1);
-        // command.linear.z = step * (prob(gen) - 1);
-        command.angular.z = 3.14159265359 * (prob(gen) - 1);
-      } else {
-        command.linear.x = step;
-        // command.linear.y = step * (goal.y - currentPos.y);
-        // command.linear.z = step * (goal.z - currentPos.z);
-        command.angular.z = 0;
-      }
-      if (prob(gen) / 2 <= 2) {
-        std::cout << "Woohoo! Found another Beer! BAC " << 2 << std::endl;
-      }
-
-      // Actually publishes the command to the turtle
+      command.angular.z = 0.1;
       velPub.publish(command);
       ros::Duration(1.1).sleep();
     }
   }
 };
 
-// Creating a that will attempt to follow the leader
+// Creating a that will attempt to follow the Spinner
 class FollowerDriver {
- private:
+private:
   // Nothing outside of this class should even need to see this
   ros::NodeHandle n;
   ros::Publisher velPub;
+  ros::Subscriber spinPose;
+  ros::Subscriber myPose;
+  turtlesim::Pose currentPose;
   geometry_msgs::Twist command;
+  float theta;
 
- public:
+public:
   // Creating a constructor that takes a ROS node handle and generates a
   // publisher
+  void poseCallback(const turtlesim::Pose &msg)
+  {
+    theta = msg.theta;
+  }
+  void pose2Callback(const turtlesim::Pose &msg)
+  {
+    currentPose.theta = msg.theta;
+    currentPose.x = msg.x;
+    currentPose.y = msg.y;
+  }
+
   FollowerDriver(ros::NodeHandle& nh) {
     n = nh;
-    velPub =
-        n.advertise<geometry_msgs::Twist>("/turtlesim2/turtle1/cmd_vel", 1);
+    velPub = n.advertise<geometry_msgs::Twist>("/turtle2/cmd_vel", 1);
+    spinPose = n.subscribe("/turtle1/pose", 10, &FollowerDriver::poseCallback, this);
+    myPose = n.subscribe("/turtle2/pose", 10, &FollowerDriver::pose2Callback, this);
   }
 
   bool follow() {
-    std::cout << "Will now try to follow the leader.\n";
+    std::cout << "Will now try to walk past Spinner.\n";
     ros::Duration(0.5).sleep();
-
-    // This is the new standard random number generator in c++11
-    std::mt19937 gen(time(NULL));
-    std::uniform_real_distribution<double> prob(0, 2);
-
-    // Step size is the maximum distance the robot will travel per command
-    double step = 80;
-    double countAng = 0.0;
+    float vel;
 
     while (n.ok()) {
-      // Try to move towards goal from current position.
-      if (prob(gen) / 2 <= exp(2) / 10) {
-        command.linear.x = step * (prob(gen) - 1);
-        // command.linear.y = step * (prob(gen) - 1);
-        // command.linear.z = step * (prob(gen) - 1);
-        command.angular.z = 3.14159265359 * (prob(gen) - 1);
-      } else {
-        command.linear.x = step;
-        // command.linear.y = step * (goal.y - currentPos.y);
-        // command.linear.z = step * (goal.z - currentPos.z);
-        command.angular.z = 0;
-      }
-      if (prob(gen) / 2 <= 2) {
-        std::cout << "Woohoo! Found another Beer! BAC " << 2 << std::endl;
-      }
-
-      // Actually publishes the command to the turtle
+      vel = 0.025*std::sqrt((currentPose.x-9.5)^2+(currentPose.y-5.5)^2);
+      float angle = std::atan();
       velPub.publish(command);
       ros::Duration(1.1).sleep();
     }
@@ -122,13 +91,38 @@ class FollowerDriver {
 
 int main(int argc, char** argv) {
   // init the ROS node
-  ros::init(argc, argv, "LeaderFollower");
+  ros::init(argc, argv, "SpinnerFollower");
   ros::NodeHandle nh;
 
   // Creates and runs the drunken turtle
   FollowerDriver follower(nh);
-  LeaderDriver leader(nh);
+  SpinnerDriver Spinner(nh);
 
-  boost::thread thread_b(&LeaderDriver::lead, leader);
+  ros::service::waitForService("spawn");
+  ros::ServiceClient add_turtle =
+  nh.serviceClient<turtlesim::Spawn>("spawn");
+  turtlesim::Spawn srv;
+  add_turtle.call(srv);
+  ros::ServiceClient teleport_turtle =
+  nh.serviceClient<turtlesim::TeleportAbsolute>("turtle1/teleport_absolute");
+  turtlesim::TeleportAbsolute srv2;
+  srv2.request.x = 5.0;
+  srv2.request.y = 5.5;  
+  srv2.request.theta = 0;
+  teleport_turtle.call(srv2);
+  ros::ServiceClient teleport_turtle2 =
+  nh.serviceClient<turtlesim::TeleportAbsolute>("turtle2/teleport_absolute");
+  turtlesim::TeleportAbsolute srv3;
+  srv3.request.x = 0.5;
+  srv3.request.y = 5.5;  
+  srv3.request.theta = 0;
+  teleport_turtle2.call(srv3);
+
+  ros::service::waitForService("clear");
+  ros::ServiceClient clear =  nh.serviceClient<std_srvs::Empty>("clear");
+  std_srvs::Empty empt;
+  clear.call(empt);
+
+  boost::thread thread_b(&SpinnerDriver::lead, Spinner);
   follower.follow();
 }
